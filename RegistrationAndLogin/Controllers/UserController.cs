@@ -6,6 +6,7 @@ using System.Net;
 using System.Net.Mail;
 using System.Web;
 using System.Web.Mvc;
+using System.Web.Security;
 
 namespace RegistrationAndLogin.Controllers
 {
@@ -80,15 +81,88 @@ namespace RegistrationAndLogin.Controllers
             return View(user);
         }
 
-        //Verify Email
+        //Verify Account
+        [HttpGet]
+        public ActionResult VerifyAccount(string id)
+        {
+            bool Status = false;
+            using (RegLoginDatabaseEntities dc = new RegLoginDatabaseEntities())
+            {
+                dc.Configuration.ValidateOnSaveEnabled = false; //This line here to avoid confirm password does not match issue on save change
+
+                var v = dc.Users.Where(a => a.ActivationCode == new Guid(id)).FirstOrDefault();
+                if(v != null)
+                {
+                    v.IsEmailVerified = true;
+                    dc.SaveChanges();
+                    Status = true;
+                }
+
+                else
+                {
+                    ViewBag.Message = "Invalid Request";
+                }
+            }
+            ViewBag.Status = Status;
+            return View();
+        }
 
         //Verify Email LINK
 
         //Login
+        [HttpGet]
+        public ActionResult Login()
+        {
+            return View();
+        }
 
         //Login POST
+        [HttpPost]
+        [ValidateAntiForgeryToken]
+        public ActionResult Login(UserLogin login, string ReturnUrl="")
+        {
+            string message = "";
+
+            using (RegLoginDatabaseEntities dc = new RegLoginDatabaseEntities())
+            {
+                var v = dc.Users.Where(a => a.EmailID == login.EmailID).FirstOrDefault();
+
+                if(v != null)
+                {
+                    if (string.Compare(Crypto.Hash(login.Password), v.Password) == 0)
+                    {
+                        int timeout = login.RememberMe ? 525600 : 20; //52600 sec = 1 year
+                        var ticket = new FormsAuthenticationTicket(login.EmailID, login.RememberMe, timeout);
+                        string encrypted = FormsAuthentication.Encrypt(ticket);
+                        var cookie = new HttpCookie(FormsAuthentication.FormsCookieName, encrypted);
+                        cookie.Expires = DateTime.Now.AddMinutes(timeout);
+                        cookie.HttpOnly = true;
+                        Response.Cookies.Add(cookie);
+
+                        if(Url.IsLocalUrl(ReturnUrl))
+                        {
+                            return RedirectToAction("Index", "Home");
+
+                        }
+                    }
+                }
+                else
+                {
+                    message = "Invalid email or password";
+                }
+            }
+                ViewBag.Message = message;
+            return View();
+        }
 
         //Logout
+        [Authorize]
+        [HttpPost]
+        public ActionResult Logout()
+        {
+            FormsAuthentication.SignOut();
+            return RedirectToAction("Login", "User");
+        }
 
         [NonAction]
         public bool IsEmailExist(string emailID)
@@ -115,7 +189,7 @@ namespace RegistrationAndLogin.Controllers
 
             string body = "<br/><br/>We are excited to tell you that your Accout is " + 
                 "successfully created. Please click on the below link to verify your account" +
-                "<br/><br/> <a href = '"+link+"'>"+link+"</a>";
+                " <br/><br/> <a href = '"+link+"'>"+link+"</a>";
 
 
             var smtp = new SmtpClient
